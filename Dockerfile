@@ -1,67 +1,25 @@
-# suiyue（岁月）— Dockerfile
-#
-# 多阶段构建：
-# 阶段 1: 构建 Go 后端二进制
-# 阶段 2: 构建前端静态文件
+FROM alpine:3.19
 
-# ============================================================
-# 阶段 1: 构建 Go 后端
-# ============================================================
-FROM golang:1.25-alpine AS backend-builder
+RUN apk add --no-cache \
+    curl \
+    bash \
+    ca-certificates \
+    socat \
+    tzdata \
+    sqlite \
+    && ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
 
-WORKDIR /app
+# نصب X-UI
+RUN curl -L https://github.com/mhsanaei/3x-ui/releases/download/v3.0.2/x-ui-linux-amd64.tar.gz -o /tmp/x-ui.tar.gz \
+    && tar -xzf /tmp/x-ui.tar.gz -C /usr/local/ \
+    && rm /tmp/x-ui.tar.gz \
+    && chmod +x /usr/local/x-ui/x-ui
 
-COPY go.mod go.sum ./
-RUN go mod download
+RUN mkdir -p /etc/x-ui /var/log/x-ui
 
-COPY . .
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bin/api ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bin/worker ./cmd/worker
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bin/seed ./cmd/seed
+EXPOSE ${PORT}
 
-# ============================================================
-# 阶段 2: 构建前端
-# ============================================================
-FROM node:22-alpine AS frontend-builder
-
-WORKDIR /frontend
-
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
-
-COPY frontend/ .
-RUN npm run build
-
-# ============================================================
-# 阶段 3: API 最终镜像
-# ============================================================
-FROM alpine:3.22 AS api
-
-RUN apk add --no-cache ca-certificates tzdata
-
-WORKDIR /app
-
-COPY --from=backend-builder /bin/api /app/api
-COPY --from=backend-builder /bin/worker /app/worker
-COPY --from=backend-builder /bin/seed /app/seed
-COPY --from=frontend-builder /web/static /app/web/static
-COPY migrations /app/migrations
-COPY deploy/scripts/hourly-log.sh /app/hourly-log.sh
-RUN chmod +x /app/hourly-log.sh
-
-EXPOSE 3000
-
-CMD ["/app/api"]
-
-# ============================================================
-# 阶段 4: Worker 最终镜像
-# ============================================================
-FROM api AS worker
-CMD ["/app/worker"]
-
-# ============================================================
-# 阶段 5: Seed 最终镜像
-# ============================================================
-FROM api AS seed
-CMD ["/app/seed"]
+CMD ["/start.sh"]
